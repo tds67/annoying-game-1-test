@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lower The Volume And Escape The Tab</title>
+  <style>
+    :root { --fg: #e8e8e8; --muted: #a6a6a6; --bg: #0b0c10; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; overflow: hidden; }
+    #game { position: fixed; inset: 0; user-select: none; -webkit-user-select: none; }
+
+    /* Overlays */
+    .overlay {
+      position: fixed; inset: 0; display: grid; place-items: center;
+      background: rgba(0,0,0,.75);
+      z-index: 50;
+    }
+    .card {
+      width: min(720px, calc(100vw - 32px));
+      background: rgba(20,22,30,.92);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 16px;
+      padding: 18px 18px 14px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.55);
+    }
+    .card h1 { margin: 0 0 8px; font-size: 22px; letter-spacing: .2px; }
+    .card p { margin: 8px 0; color: var(--muted); line-height: 1.35; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+    button {
+      appearance: none; border: 0; border-radius: 12px;
+      padding: 10px 14px; font-weight: 700; cursor: pointer;
+      background: #eaeaea; color: #111;
+    }
+    button:active { transform: translateY(1px); }
+    .ghostBtn { background: transparent; color: var(--fg); border: 1px solid rgba(255,255,255,.16); }
+    .tiny { font-size: 12px; color: rgba(255,255,255,.65); }
+    .tiny kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding: 2px 6px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06);
+    }
+
+    /* HUD */
+    #hud {
+      position: fixed; left: 12px; top: 12px; z-index: 10;
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: none;
+    }
+    #title {
+      font-weight: 800; letter-spacing: .2px;
+      padding: 10px 12px; border-radius: 14px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.08);
+      backdrop-filter: blur(8px);
+    }
+    #status {
+      padding: 10px 12px; border-radius: 14px;
+      background: rgba(255,255,255,.05);
+      border: 1px solid rgba(255,255,255,.08);
+      color: rgba(255,255,255,.82);
+      backdrop-filter: blur(8px);
+      max-width: min(520px, calc(100vw - 24px));
+      line-height: 1.25;
+    }
+    #status .warn { color: #ffd37a; font-weight: 700; }
+    #status .ok { color: #9dffb3; font-weight: 800; }
+    #status .bad { color: #ff8a8a; font-weight: 800; }
+
+    /* Volume rocker */
+    #rocker {
+      position: fixed; width: 140px; height: 280px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.03));
+      border: 1px solid rgba(255,255,255,.10);
+      box-shadow: 0 20px 70px rgba(0,0,0,.55);
+      z-index: 5;
+    }
+    #rockerTitle {
+      padding: 10px 12px 8px;
+      font-weight: 900; letter-spacing: .2px;
+      color: rgba(255,255,255,.9);
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+    #rockerTitle span { font-size: 11px; font-weight: 700; color: rgba(255,255,255,.55); }
+    #track {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      top: 44px; bottom: 18px; width: 34px;
+      border-radius: 18px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.10);
+      overflow: hidden;
+    }
+    #fill {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      height: 50%;
+      background: rgba(255,255,255,.22);
+    }
+    #knob {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      width: 52px; height: 28px; border-radius: 14px;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 10px 28px rgba(0,0,0,.45);
+      border: 1px solid rgba(0,0,0,.2);
+    }
+
+    /* Two pointers */
+    .cursor {
+      position: fixed; width: 18px; height: 18px; border-radius: 50%;
+      z-index: 20; pointer-events: none;
+      display: grid; place-items: center;
+      font-size: 10px; font-weight: 900;
+      mix-blend-mode: screen;
+    }
+    #controllerCursor {
+      background: rgba(90, 170, 255, .9);
+      box-shadow: 0 0 22px rgba(90,170,255,.65);
+    }
+    #grabCursor {
+      background: rgba(255, 90, 140, .92);
+      box-shadow: 0 0 22px rgba(255,90,140,.65);
+    }
+    #grabCursor.detached {
+      background: rgba(255, 180, 80, .95);
+      box-shadow: 0 0 22px rgba(255,180,80,.75);
+    }
+
+    /* Win screen */
+    #winOverlay h2 { margin: 0 0 6px; font-size: 20px; }
+    #winOverlay p { margin: 8px 0; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div id="game">
+    <div id="hud">
+      <div id="title">Lower The Volume & Escape The Tab</div>
+      <div id="status"></div>
+    </div>
+
+    <div id="rocker" aria-hidden="true">
+      <div id="rockerTitle">
+        <div>VOLUME</div>
+        <span>(not your system)</span>
+      </div>
+      <div id="track">
+        <div id="fill"></div>
+        <div id="knob"></div>
+      </div>
+    </div>
+
+    <div id="controllerCursor" class="cursor">C</div>
+    <div id="grabCursor" class="cursor">G</div>
+
+    <div id="startOverlay" class="overlay">
+      <div class="card">
+        <h1>Lower the Volume and Escape the Tab</h1>
+        <p>
+          You’re “stuck” in fullscreen. The only way out is lowering the in-game volume rocker to (almost) zero —
+          using the <b>grab pointer</b> that keeps falling off every ~2 seconds.
+        </p>
+        <p>
+          <b>Safety:</b> You can always quit with <span class="tiny"><kbd>Shift</kbd> + <kbd>Q</kbd></span>.
+          (This is a game — not real lock-in.)
+        </p>
+        <div class="row">
+          <button id="startBtn">Start (Fullscreen + Pointer Lock)</button>
+          <button id="startWindowedBtn" class="ghostBtn">Start Windowed</button>
+        </div>
+        <p class="tiny" style="margin-top:12px">
+          Controls: Move mouse to move <b>C</b>. <b>G</b> follows (when attached). Click/hold to grab the knob.
+          If <b>G</b> detaches (turns orange), move <b>C</b> onto it and click to re-catch.
+        </p>
+      </div>
+    </div>
+
+    <div id="reenterOverlay" class="overlay" style="display:none">
+      <div class="card">
+        <h1>NOPE. GET BACK IN.</h1>
+        <p>Re-enter fullscreen & pointer lock to continue.</p>
+        <div class="row">
+          <button id="reenterBtn">Re-enter</button>
+          <button id="quitBtn" class="ghostBtn">Quit (Shift+Q)</button>
+        </div>
+        <p class="tiny">Emergency Quit: <kbd>Shift</kbd> + <kbd>Q</kbd></p>
+      </div>
+    </div>
+
+    <div id="winOverlay" class="overlay" style="display:none">
+      <div class="card">
+        <h2>✅ You escaped.</h2>
+        <p>The tab finally lets you go.</p>
+        <div class="row">
+          <button id="leaveBtn">Leave (exit fullscreen)</button>
+          <button id="restartBtn" class="ghostBtn">Restart</button>
+        </div>
+        <p class="tiny">If you want it nastier: raise <code>audioMaxGain</code> in the config (careful).</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =========================
+    // CONFIG (tweak difficulty)
+    // =========================
+    const CFG = {
+      detachBaseMs: 2000,      // "falls off every 2 seconds"
+      detachJitterMs: 450,     // randomness around that
+      gravity: 1400,           // px/s^2 for falling things
+      grabSpring: 18,          // how strongly G follows C when attached
+      grabDamping: 10,         // damping for spring
+      catchRadius: 26,         // how close C must be to catch G
+      knobGrabRadius: 28,      // how close G must be to grab the knob
+      teleportChancePerSec: 0.22,     // pointer/rocker teleport chaos
+      rockerDropChancePerSec: 0.10,   // rocker falls off randomly
+      knobSlipChancePerSec: 0.14,     // knob slips out of your grip
+      snapBackPerSec: 0.42,           // volume creeps back up when not dragging
+      volumeJumpChancePerSec: 0.26,   // random "goes back up to full"
+      volumeJumpMin: 0.12,
+      volumeJumpMax: 0.55,
+      winThreshold: 0.03,       // must reduce to ~0
+      winHoldMs: 1400,          // hold it there to escape
+      audioMaxGain: 0.20,       // SAFETY CAP for loudness (0.0 - 1.0)
+      fpsCap: 120
+    };
+
+    // =========================
+    // DOM
+    // =========================
+    const el = {
+      game: document.getElementById('game'),
+      status: document.getElementById('status'),
+      rocker: document.getElementById('rocker'),
+      track: document.getElementById('track'),
+      fill: document.getElementById('fill'),
+      knob: document.getElementById('knob'),
+      controllerCursor: document.getElementById('controllerCursor'),
+      grabCursor: document.getElementById('grabCursor'),
+
+      startOverlay: document.getElementById('startOverlay'),
+      startBtn: document.getElementById('startBtn'),
+      startWindowedBtn: document.getElementById('startWindowedBtn'),
+
+      reenterOverlay: document.getElementById('reenterOverlay'),
+      reenterBtn: document.getElementById('reenterBtn'),
+      quitBtn: document.getElementById('quitBtn'),
+
+      winOverlay: document.getElementById('winOverlay'),
+      leaveBtn: document.getElementById('leaveBtn'),
+      restartBtn: document.getElementById('restartBtn'),
+    };
+
+    // =========================
+    // STATE
+    // =========================
+    let W = innerWidth, H = innerHeight;
+    let running = false;
+    let won = false;
+
+    const controller = { x: W * 0.5, y: H * 0.5 };
+    const grab = { x: W * 0.5 + 20, y: H * 0.5, vx: 0, vy: 0, attached: true };
+
+    const rocker = { x: W * 0.72, y: H * 0.22, vx: 0, vy: 0, falling: false };
+
+    let volume = 1.0;              // 1 = loud, 0 = silent
+    let draggingKnob = false;
+    let mouseDown = false;
+    let winHold = 0;
+
+    // Timers
+    let detachTimer = null;
+    let lastT = performance.now();
+    let teleportBudget = 0;
+    let rockerDropBudget = 0;
+    let knobSlipBudget = 0;
+    let volumeJumpBudget = 0;
+
+    // Pointer lock handling
+    function hasPointerLock() { return document.pointerLockElement === el.game; }
+
+    function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+    function rand(a, b) { return a + Math.random() * (b - a); }
+    function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+
+    // =========================
+    // AUDIO (WebAudio "annoying")
+    // =========================
+    let audio = null;
+
+    function initAudio() {
+      if (audio) return audio;
+
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+      // Mix bus
+      const master = ctx.createGain();
+      master.gain.value = 0.0001;
+      master.connect(ctx.destination);
+
+      // Main oscillators
+      const osc1 = ctx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.value = 240;
+
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'square';
+      osc2.frequency.value = 480;
+
+      // LFO wobble
+      const lfo = ctx.createOscillator();
+      lfo.type = 'triangle';
+      lfo.frequency.value = 6.5;
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = 60;
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc1.frequency);
+
+      // Noise buffer (loop)
+      const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
+      const noise = ctx.createBufferSource();
+      noise.buffer = noiseBuf;
+      noise.loop = true;
+
+      // Gains
+      const g1 = ctx.createGain(); g1.gain.value = 0.32;
+      const g2 = ctx.createGain(); g2.gain.value = 0.18;
+      const gn = ctx.createGain(); gn.gain.value = 0.22;
+
+      // Slight filter to keep it “annoying” but not painful
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 900;
+      filter.Q.value = 0.7;
+
+      osc1.connect(g1); osc2.connect(g2); noise.connect(gn);
+      g1.connect(filter); g2.connect(filter); gn.connect(filter);
+      filter.connect(master);
+
+      osc1.start(); osc2.start(); lfo.start(); noise.start();
+
+      audio = { ctx, master, osc1, osc2, filter, startedAt: ctx.currentTime };
+      return audio;
+    }
+
+    function setAudioVolume01(v) {
+      if (!audio) return;
+      const ctx = audio.ctx;
+      // SAFETY: capped
+      const target = clamp(v, 0, 1) * CFG.audioMaxGain;
+      audio.master.gain.setTargetAtTime(target, ctx.currentTime, 0.03);
+
+      // Also modulate pitch a bit based on volume for extra chaos
+      const t = ctx.currentTime - audio.startedAt;
+      audio.osc1.frequency.setTargetAtTime(180 + 560 * v + 50 * Math.sin(t * 2.2), ctx.currentTime, 0.05);
+      audio.osc2.frequency.setTargetAtTime(320 + 820 * v + 90 * Math.cos(t * 1.6), ctx.currentTime, 0.05);
+      audio.filter.frequency.setTargetAtTime(700 + 1400 * v, ctx.currentTime, 0.08);
+    }
+
+    async function startAudio() {
+      const a = initAudio();
+      if (a.ctx.state !== 'running') await a.ctx.resume();
+      setAudioVolume01(volume);
+    }
+
+    function stopAudio() {
+      if (!audio) return;
+      const ctx = audio.ctx;
+      audio.master.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.02);
+    }
+
+    // =========================
+    // FULLSCREEN / POINTER LOCK
+    // =========================
+    async function enterFullscreen() {
+      try {
+        if (!document.fullscreenElement) {
+          await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+        }
+      } catch (_) {}
+    }
+
+    async function enterPointerLock() {
+      try { el.game.requestPointerLock(); } catch (_) {}
+    }
+
+    async function startGame({ fullscreen }) {
+      won = false;
+      running = true;
+
+      // Reset
+      W = innerWidth; H = innerHeight;
+      controller.x = W * 0.5; controller.y = H * 0.5;
+      grab.x = controller.x + 24; grab.y = controller.y;
+      grab.vx = 0; grab.vy = 0; grab.attached = true;
+
+      rocker.x = W * rand(0.62, 0.86);
+      rocker.y = H * rand(0.18, 0.32);
+      rocker.vx = 0; rocker.vy = 0; rocker.falling = false;
+
+      volume = 1.0;
+      draggingKnob = false;
+      mouseDown = false;
+      winHold = 0;
+
+      teleportBudget = 0;
+      rockerDropBudget = 0;
+      knobSlipBudget = 0;
+      volumeJumpBudget = 0;
+
+      el.winOverlay.style.display = "none";
+      el.reenterOverlay.style.display = "none";
+      el.startOverlay.style.display = "none";
+
+      if (fullscreen) await enterFullscreen();
+      await enterPointerLock();
+      await startAudio();
+
+      scheduleDetach();
+      lastT = performance.now();
+      requestAnimationFrame(loop);
+    }
+
+    function quitGame() {
+      running = false;
+      won = false;
+      draggingKnob = false;
+      grab.attached = true;
+      clearTimeout(detachTimer);
+      detachTimer = null;
+
+      stopAudio();
+
+      // Best-effort escape
+      try { document.exitPointerLock(); } catch (_) {}
+      try { if (document.fullscreenElement) document.exitFullscreen(); } catch (_) {}
+
+      el.reenterOverlay.style.display = "none";
+      el.winOverlay.style.display = "none";
+      el.startOverlay.style.display = "grid";
+      renderStatus("Quit. (Shift+Q)", "bad");
+    }
+
+    function win() {
+      won = true;
+      running = true; // keep UI
+      draggingKnob = false;
+      clearTimeout(detachTimer);
+      detachTimer = null;
+
+      stopAudio();
+      el.winOverlay.style.display = "grid";
+
+      try { document.exitPointerLock(); } catch (_) {}
+    }
+
+    document.addEventListener('fullscreenchange', () => {
+      if (!running || won) return;
+      if (!document.fullscreenElement) {
+        // “Stuck” vibe: nag them back in.
+        el.reenterOverlay.style.display = "grid";
+      } else {
+        el.reenterOverlay.style.display = "none";
+      }
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      if (!running || won) return;
+      if (!hasPointerLock()) {
+        el.reenterOverlay.style.display = "grid";
+      }
+    });
+
+    // =========================
+    // INPUT
+    // =========================
+    window.addEventListener('resize', () => { W = innerWidth; H = innerHeight; });
+
+    el.game.addEventListener('mousemove', (e) => {
+      if (!running) return;
+
+      if (hasPointerLock()) {
+        controller.x = clamp(controller.x + e.movementX, 0, W);
+        controller.y = clamp(controller.y + e.movementY, 0, H);
+      } else {
+        controller.x = clamp(e.clientX, 0, W);
+        controller.y = clamp(e.clientY, 0, H);
+      }
+    });
+
+    el.game.addEventListener('mousedown', () => {
+      if (!running || won) return;
+      mouseDown = true;
+
+      // If grab is detached, attempt to catch it
+      if (!grab.attached) {
+        const d = dist(controller.x, controller.y, grab.x, grab.y);
+        if (d <= CFG.catchRadius) {
+          grab.attached = true;
+          grab.vx = 0; grab.vy = 0;
+          renderStatus("You caught it. Now GRAB THE KNOB.", "warn");
+        }
+        return;
+      }
+
+      // Try to grab knob
+      const knobPos = getKnobWorldPos();
+      const dKnob = dist(grab.x, grab.y, knobPos.x, knobPos.y);
+      if (dKnob <= CFG.knobGrabRadius && !rocker.falling) {
+        draggingKnob = true;
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      mouseDown = false;
+      draggingKnob = false;
+    });
+
+    window.addEventListener('keydown', (e) => {
+      // Emergency quit
+      if (e.shiftKey && (e.key.toLowerCase() === 'q')) {
+        e.preventDefault();
+        quitGame();
+      }
+    }, { passive: false });
+
+    // =========================
+    // GAME MECHANICS
+    // =========================
+    function scheduleDetach() {
+      if (detachTimer) clearTimeout(detachTimer);
+      const ms = CFG.detachBaseMs + rand(-CFG.detachJitterMs, CFG.detachJitterMs);
+      detachTimer = setTimeout(() => {
+        if (!running || won) return;
+        if (grab.attached) {
+          grab.attached = false;
+          draggingKnob = false;
+          // Kick it so it "falls off"
+          grab.vx = rand(-240, 240);
+          grab.vy = rand(-220, -60);
+          renderStatus("GRAB POINTER DETACHED — CATCH IT!", "bad");
+        }
+        scheduleDetach();
+      }, ms);
+    }
+
+    function teleportChaos(dt) {
+      teleportBudget += dt * CFG.teleportChancePerSec;
+      while (teleportBudget >= 1) {
+        teleportBudget -= 1;
+
+        // Teleport either grab or rocker (or both sometimes)
+        const r = Math.random();
+        if (r < 0.5) {
+          grab.x = rand(40, W - 40);
+          grab.y = rand(40, H - 40);
+          grab.vx *= 0.2; grab.vy *= 0.2;
+        } else {
+          rocker.x = rand(40, W - 180);
+          rocker.y = rand(40, H - 340);
+          rocker.vx = rand(-80, 80);
+          rocker.vy = rand(-60, 60);
+          rocker.falling = false;
+        }
+      }
+    }
+
+    function rockerDropChaos(dt) {
+      rockerDropBudget += dt * CFG.rockerDropChancePerSec;
+      while (rockerDropBudget >= 1) {
+        rockerDropBudget -= 1;
+        if (!rocker.falling && Math.random() < 0.8) {
+          rocker.falling = true;
+          rocker.vx = rand(-120, 120);
+          rocker.vy = rand(-80, 20);
+          draggingKnob = false;
+        }
+      }
+    }
+
+    function knobSlipChaos(dt) {
+      if (!draggingKnob) return;
+      knobSlipBudget += dt * CFG.knobSlipChancePerSec;
+      while (knobSlipBudget >= 1) {
+        knobSlipBudget -= 1;
+        // Slip out of your grip
+        draggingKnob = false;
+        // Tiny punishment: volume jumps a bit
+        volume = clamp(volume + rand(0.06, 0.22), 0, 1);
+      }
+    }
+
+    function volumeJumpChaos(dt) {
+      // Random "goes back up to full volume" vibes
+      volumeJumpBudget += dt * CFG.volumeJumpChancePerSec;
+      while (volumeJumpBudget >= 1) {
+        volumeJumpBudget -= 1;
+        const bump = rand(CFG.volumeJumpMin, CFG.volumeJumpMax);
+        volume = clamp(volume + bump, 0, 1);
+      }
+    }
+
+    function getKnobWorldPos() {
+      // Convert current volume to knob y along track (top = loud, bottom = quiet)
+      const trackRect = el.track.getBoundingClientRect();
+      const top = trackRect.top + 18;
+      const bottom = trackRect.bottom - 18;
+      const y = top + (1 - volume) * (bottom - top);
+      const x = trackRect.left + trackRect.width / 2;
+      return { x, y, top, bottom };
+    }
+
+    function applyKnobDrag() {
+      const trackRect = el.track.getBoundingClientRect();
+      const top = trackRect.top + 18;
+      const bottom = trackRect.bottom - 18;
+
+      // Map grab.y to volume (drag down => smaller volume)
+      const t = clamp((grab.y - top) / (bottom - top), 0, 1);
+      volume = clamp(1 - t, 0, 1);
+    }
+
+    // =========================
+    // RENDER
+    // =========================
+    function renderStatus(msg, kind) {
+      const cls = kind === "ok" ? "ok" : kind === "bad" ? "bad" : "warn";
+      el.status.innerHTML = `<span class="${cls}">${msg}</span>
+        <div class="tiny" style="margin-top:6px">
+          Volume: <b>${Math.round(volume * 100)}%</b> ·
+          ${grab.attached ? "Grab: <b>attached</b>" : "Grab: <b>DETACHED</b>"} ·
+          Quit: <kbd>Shift</kbd>+<kbd>Q</kbd>
+        </div>`;
+    }
+
+    function render() {
+      // Rocker placement
+      el.rocker.style.left = rocker.x + "px";
+      el.rocker.style.top = rocker.y + "px";
+
+      // Knob + fill
+      const trackRect = el.track.getBoundingClientRect();
+      const top = trackRect.top + 18;
+      const bottom = trackRect.bottom - 18;
+      const knobY = top + (1 - volume) * (bottom - top);
+
+      // Position knob relative to track
+      const knobLocalY = knobY - trackRect.top - (el.knob.offsetHeight / 2);
+      el.knob.style.top = knobLocalY + "px";
+
+      el.fill.style.height = (volume * 100) + "%";
+
+      // Cursors
+      el.controllerCursor.style.left = (controller.x - 9) + "px";
+      el.controllerCursor.style.top  = (controller.y - 9) + "px";
+
+      el.grabCursor.style.left = (grab.x - 9) + "px";
+      el.grabCursor.style.top  = (grab.y - 9) + "px";
+      el.grabCursor.classList.toggle("detached", !grab.attached);
+    }
+
+    // =========================
+    // LOOP
+    // =========================
+    function loop(t) {
+      if (!running) return;
+
+      const dtRaw = (t - lastT) / 1000;
+      const dt = clamp(dtRaw, 0, 1 / 15); // stability
+      lastT = t;
+
+      if (!won) {
+        // Chaos systems
+        teleportChaos(dt);
+        rockerDropChaos(dt);
+        volumeJumpChaos(dt);
+        knobSlipChaos(dt);
+
+        // Grab pointer physics
+        if (grab.attached) {
+          // Spring towards controller
+          const dx = controller.x - grab.x;
+          const dy = controller.y - grab.y;
+
+          // spring acceleration
+          const ax = dx * CFG.grabSpring - grab.vx * CFG.grabDamping;
+          const ay = dy * CFG.grabSpring - grab.vy * CFG.grabDamping;
+
+          grab.vx += ax * dt;
+          grab.vy += ay * dt;
+
+          grab.x += grab.vx * dt;
+          grab.y += grab.vy * dt;
+
+          // If dragging, adjust volume
+          if (draggingKnob && mouseDown && !rocker.falling) {
+            applyKnobDrag();
+          } else {
+            // Snap-back when not actively dragging (volume creeps up)
+            volume = clamp(volume + CFG.snapBackPerSec * dt, 0, 1);
+          }
+        } else {
+          // Detached: falls with gravity until caught
+          grab.vy += CFG.gravity * dt;
+          grab.x += grab.vx * dt;
+          grab.y += grab.vy * dt;
+
+          // Wrap/respawn if it falls off-screen
+          if (grab.y > H + 120 || grab.x < -120 || grab.x > W + 120) {
+            grab.x = rand(40, W - 40);
+            grab.y = -30;
+            grab.vx = rand(-160, 160);
+            grab.vy = rand(60, 140);
+          }
+
+          // Volume still snaps back while you're suffering
+          volume = clamp(volume + (CFG.snapBackPerSec * 1.2) * dt, 0, 1);
+        }
+
+        // Rocker physics (can fall off)
+        if (rocker.falling) {
+          rocker.vy += CFG.gravity * dt;
+          rocker.x += rocker.vx * dt;
+          rocker.y += rocker.vy * dt;
+
+          if (rocker.y > H + 240 || rocker.x < -240 || rocker.x > W + 240) {
+            rocker.falling = false;
+            rocker.x = rand(40, W - 180);
+            rocker.y = rand(40, H - 340);
+            rocker.vx = 0; rocker.vy = 0;
+          }
+        }
+
+        // Win check
+        if (volume <= CFG.winThreshold) {
+          winHold += dt * 1000;
+          renderStatus(`KEEP IT DOWN… ${Math.ceil((CFG.winHoldMs - winHold) / 100)}%`, "ok");
+          if (winHold >= CFG.winHoldMs) win();
+        } else {
+          winHold = 0;
+
+          if (!grab.attached) renderStatus("GRAB POINTER DETACHED — CATCH IT!", "bad");
+          else if (draggingKnob) renderStatus("DON'T LET GO. DON'T LET IT SLIP.", "warn");
+          else renderStatus("Grab the knob and drag DOWN to reduce volume.", "warn");
+        }
+
+        // Update audio
+        setAudioVolume01(volume);
+      }
+
+      render();
+
+      if (!won) requestAnimationFrame(loop);
+    }
+
+    // =========================
+    // UI BUTTONS
+    // =========================
+    el.startBtn.addEventListener('click', () => startGame({ fullscreen: true }));
+    el.startWindowedBtn.addEventListener('click', () => startGame({ fullscreen: false }));
+
+    el.reenterBtn.addEventListener('click', async () => {
+      if (!running || won) return;
+      await enterFullscreen();
+      await enterPointerLock();
+      el.reenterOverlay.style.display = "none";
+    });
+
+    el.quitBtn.addEventListener('click', () => quitGame());
+
+    el.leaveBtn.addEventListener('click', () => {
+      quitGame();
+    });
+
+    el.restartBtn.addEventListener('click', () => {
+      // Keep it simple: reload state
+      el.winOverlay.style.display = "none";
+      el.startOverlay.style.display = "grid";
+    });
+
+    // Start status
+    renderStatus("Click Start. (Emergency quit: Shift+Q)", "warn");
+  </script>
+</body>
+</html>
